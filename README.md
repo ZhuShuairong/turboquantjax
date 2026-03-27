@@ -132,7 +132,7 @@ Validates the core algorithm with no model or GPU required (GPU enables an optio
 
 **Run it:**
 ```bash
-python -m turboquant.test_turboquant
+python test_turboquant.py
 ```
 
 ### `validate.py` — Real Model Validation
@@ -149,10 +149,49 @@ Tests TurboQuant on actual KV cache data from a real language model.
 
 **Run it:**
 ```bash
-python -m turboquant.validate
+python validate.py
 ```
 
 First run downloads the model (~2GB). Requires a CUDA GPU with at least 6GB VRAM.
+
+### `benchmark_compare.py` — Original vs Optimized Benchmark
+
+Compares the original git HEAD implementation against the refactored working-tree version on the same synthetic workload.
+
+**Run it:**
+```bash
+python benchmark_compare.py --bits 3
+```
+
+Useful flags:
+
+- `--bits 2 3 4` to test multiple bit-widths
+- `--device cuda` to force GPU timing
+- `--seq-len 4096` to scale the KV benchmark
+- `--repeats 10` for more stable timing
+
+### `benchmark_wsl_base_vs_gguf.py` — Fair WSL Base vs GGUF Inference Benchmark
+
+Runs a matched benchmark in WSL for local base checkpoints vs GGUF quantized models.
+
+What it measures:
+1. Model load time
+2. Prefill throughput (tok/s) across context lengths
+3. Decode throughput (tok/s) at a fixed decode length
+4. Effective tok/s and memory proxies (GPU peak and RSS deltas)
+
+Default model pairs:
+- `/mnt/c/models/base/Qwen3.5-4B-Base` vs `/mnt/c/models/gguf/Qwen3.5-4B-IQ4_XS.gguf`
+- `/mnt/c/models/base/Qwen3.5-9B-Base` vs `/mnt/c/models/gguf/Qwen3.5-9B-IQ4_XS.gguf`
+
+Run from Windows PowerShell:
+```bash
+wsl bash -lc 'source ~/miniconda3/etc/profile.d/conda.sh && conda activate turboquant-jax && python /mnt/c/Users/zshua/Downloads/TQ-Experimentation/turboquant-pytorch/benchmark_wsl_base_vs_gguf.py --contexts 256 512 1024 --decode-tokens 24'
+```
+
+Output:
+- Updates section `WSL Fair Base vs GGUF Inference Comparison` in the parent report:
+  `/mnt/c/Users/zshua/Downloads/TQ-Experimentation/benchmark_qwen35_turboquant_rotorquant.md`
 
 ## Project Structure
 
@@ -180,7 +219,22 @@ turboquant/
 - Python 3.10+
 - PyTorch 2.0+ with CUDA (for GPU tests)
 - scipy (for codebook computation)
-- transformers, accelerate, bitsandbytes (for real model validation only)
+- transformers, accelerate
+- bitsandbytes (optional, only for 4-bit model loading in the validation script)
+
+### Conda setup
+
+Use conda for this repo rather than a local venv:
+
+```bash
+conda env create -f environment.yml
+conda activate turboquant
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+
+If you prefer a plain dependency list after activating the env, you can still
+install from `requirements.txt`, but the recommended path is the conda file
+above.
 
 ```bash
 pip install -r requirements.txt
