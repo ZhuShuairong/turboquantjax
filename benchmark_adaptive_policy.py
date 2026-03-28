@@ -47,6 +47,7 @@ def _run_policy(
     policy: str,
     score_backend: str,
     tile_size: int,
+    query_tile_size: int,
     b: int,
     h: int,
     s: int,
@@ -64,6 +65,7 @@ def _run_policy(
         score_cache_policy=policy,
         score_backend=score_backend,
         tile_size=tile_size,
+        query_tile_size=query_tile_size,
         adaptive_promote_after=2,
         adaptive_hit_rate_threshold=0.3,
         adaptive_memory_budget_mb=512.0,
@@ -99,6 +101,7 @@ def main() -> None:
     parser.add_argument("--device", choices=["cpu", "gpu"], default="gpu")
     parser.add_argument("--score-backend", choices=["xla", "pallas"], default="xla")
     parser.add_argument("--tile-size", type=int, default=128)
+    parser.add_argument("--query-tile-size", type=int, default=128)
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument("--kv-heads", type=int, default=16)
     parser.add_argument("--head-dim", type=int, default=128)
@@ -116,6 +119,7 @@ def main() -> None:
             policy=policy,
             score_backend=args.score_backend,
             tile_size=args.tile_size,
+            query_tile_size=args.query_tile_size,
             b=1,
             h=args.kv_heads,
             s=args.seq_len,

@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from .fused_kernels import fused_term1_pallas, fused_term1_xla, has_pallas, pallas_supported_on_active_backend
 
@@ -17,7 +16,9 @@ from .quantization_utils import (
     pack_low_bit_values,
     pack_sign_bits,
     quantize_with_boundaries,
+    unpack_low_bit_values_block,
     unpack_low_bit_values,
+    unpack_sign_bits_block,
     unpack_sign_bits,
 )
 
@@ -27,11 +28,16 @@ def _tensor_bytes(value: Any) -> int:
         return sum(_tensor_bytes(v) for v in value.values())
     if isinstance(value, (list, tuple)):
         return sum(_tensor_bytes(v) for v in value)
-    if isinstance(value, np.ndarray):
-        return int(value.nbytes)
+    if hasattr(value, "nbytes"):
+        try:
+            return int(value.nbytes)
+        except Exception:
+            pass
     if hasattr(value, "dtype") and hasattr(value, "size"):
-        arr = np.asarray(value)
-        return int(arr.nbytes)
+        try:
+            return int(value.size * value.dtype.itemsize)
+        except Exception:
+            pass
     return 0
 
 
@@ -42,11 +48,14 @@ class TurboQuantCompressorV2JAX:
     seed: int
     qjl_dim: int | None = None
     tile_size: int = 256
+    query_tile_size: int = 128
     score_backend: Literal["xla", "pallas"] = "xla"
 
     def __post_init__(self) -> None:
         self.mse_bits = max(self.bits - 1, 1)
         self.qjl_dim = self.qjl_dim or self.head_dim
+        self.tile_size = max(1, int(self.tile_size))
+        self.query_tile_size = max(1, int(self.query_tile_size))
 
         self.Pi = generate_rotation_matrix(self.head_dim, seed=self.seed)
         self.PiT = self.Pi.T
@@ -64,6 +73,7 @@ class TurboQuantCompressorV2JAX:
 
         self._compress_core = jax.jit(self._compress_core_fn)
         self._score_core_tiled = jax.jit(self._score_core_tiled_fn)
+        self._score_core_packed_tiled = jax.jit(self._score_core_packed_tiled_fn, static_argnums=(5,))
 
     def prepare_for_scoring(self, compressed: dict[str, Any]) -> dict[str, Any]:
         b, h, sk, d = compressed["shape"]
@@ -141,30 +151,135 @@ class TurboQuantCompressorV2JAX:
         _, _, sk, _ = indices.shape
 
         queries = queries.astype(jnp.float32)
+        q_pad = (-sq) % self.query_tile_size
+        if q_pad > 0:
+            queries = jnp.pad(queries, ((0, 0), (0, 0), (0, q_pad), (0, 0)), mode="constant", constant_values=0.0)
+
+        sq_padded = queries.shape[2]
         q_projected = queries @ self.ST
         q_rot = queries @ self.PiT
         correction_scale = jnp.sqrt(jnp.pi / 2.0) / jnp.asarray(self.qjl_dim, dtype=jnp.float32)
-        tile = max(1, self.tile_size)
+        tile = self.tile_size
+        q_tile = self.query_tile_size
         n_tiles = sk // tile
-        out_scores = jnp.zeros((b, h, sq, sk), dtype=jnp.float32)
+        n_q_tiles = sq_padded // q_tile
+        out_scores = jnp.zeros((b, h, sq_padded, sk), dtype=jnp.float32)
 
-        def body_fn(i: int, carry: jnp.ndarray) -> jnp.ndarray:
+        def body_fn(i: int, carry_k: jnp.ndarray) -> jnp.ndarray:
             start = i * tile
             idx_tile = jax.lax.dynamic_slice(indices, (0, 0, start, 0), (b, h, tile, d))
             sign_tile = jax.lax.dynamic_slice(signs, (0, 0, start, 0), (b, h, tile, self.qjl_dim))
             vec_tile = jax.lax.dynamic_slice(vec_norms, (0, 0, start), (b, h, tile))
             norm_tile = jax.lax.dynamic_slice(residual_norm, (0, 0, start), (b, h, tile))
 
-            if self.score_backend == "pallas" and self._pallas_available:
-                term1 = fused_term1_pallas(q_rot, idx_tile, self.centroids, vec_tile)
-            else:
-                term1 = fused_term1_xla(q_rot, idx_tile, self.centroids, vec_tile)
-            qjl_ip = jnp.matmul(q_projected, jnp.swapaxes(sign_tile.astype(jnp.float32), -2, -1))
-            term2 = correction_scale * qjl_ip * norm_tile.astype(jnp.float32)[..., None, :]
-            tile_scores = term1 + term2
-            return jax.lax.dynamic_update_slice(carry, tile_scores, (0, 0, 0, start))
+            def q_body_fn(j: int, carry_q: jnp.ndarray) -> jnp.ndarray:
+                q_start = j * q_tile
+                q_rot_tile = jax.lax.dynamic_slice(q_rot, (0, 0, q_start, 0), (b, h, q_tile, d))
+                q_proj_tile = jax.lax.dynamic_slice(q_projected, (0, 0, q_start, 0), (b, h, q_tile, self.qjl_dim))
 
-        return jax.lax.fori_loop(0, n_tiles, body_fn, out_scores)
+                if self.score_backend == "pallas" and self._pallas_available:
+                    term1 = fused_term1_pallas(q_rot_tile, idx_tile, self.centroids, vec_tile)
+                else:
+                    term1 = fused_term1_xla(q_rot_tile, idx_tile, self.centroids, vec_tile)
+
+                qjl_ip = jnp.matmul(q_proj_tile, jnp.swapaxes(sign_tile.astype(jnp.float32), -2, -1))
+                term2 = correction_scale * qjl_ip * norm_tile.astype(jnp.float32)[..., None, :]
+                tile_scores = term1 + term2
+                return jax.lax.dynamic_update_slice(carry_q, tile_scores, (0, 0, q_start, start))
+
+            return jax.lax.fori_loop(0, n_q_tiles, q_body_fn, carry_k)
+
+        full_scores = jax.lax.fori_loop(0, n_tiles, body_fn, out_scores)
+        return full_scores[:, :, :sq, :]
+
+    def _score_core_packed_tiled_fn(
+        self,
+        queries: jnp.ndarray,
+        packed_indices: jnp.ndarray,
+        packed_signs: jnp.ndarray,
+        vec_norms: jnp.ndarray,
+        residual_norm: jnp.ndarray,
+        shape: tuple[int, int, int, int],
+    ) -> jnp.ndarray:
+        b, h, sk, d = shape
+        _, _, sq, _ = queries.shape
+
+        if sk % self.tile_size != 0:
+            # Non-multiple sequence lengths are handled by prepared path fallback.
+            return jnp.zeros((b, h, sq, sk), dtype=jnp.float32)
+
+        queries = queries.astype(jnp.float32)
+        q_pad = (-sq) % self.query_tile_size
+        if q_pad > 0:
+            queries = jnp.pad(queries, ((0, 0), (0, 0), (0, q_pad), (0, 0)), mode="constant", constant_values=0.0)
+
+        sq_padded = queries.shape[2]
+        q_projected = queries @ self.ST
+        q_rot = queries @ self.PiT
+
+        vec_norms = jnp.asarray(vec_norms, dtype=jnp.float32).reshape((b, h, sk))
+        residual_norm = jnp.asarray(residual_norm, dtype=jnp.float32).reshape((b, h, sk))
+
+        bh = b * h
+        q_tile = self.query_tile_size
+        k_tile = self.tile_size
+        n_q_tiles = sq_padded // q_tile
+        n_k_tiles = sk // k_tile
+
+        vec_norms_bh = vec_norms.reshape((bh, sk))
+        residual_norm_bh = residual_norm.reshape((bh, sk))
+        bh_ids = jnp.arange(bh, dtype=jnp.int32)
+        correction_scale = jnp.sqrt(jnp.pi / 2.0) / jnp.asarray(self.qjl_dim, dtype=jnp.float32)
+
+        out_scores = jnp.zeros((b, h, sq_padded, sk), dtype=jnp.float32)
+
+        def k_body_fn(i: int, carry_k: jnp.ndarray) -> jnp.ndarray:
+            start_token = i * k_tile
+
+            idx_starts = ((bh_ids * sk) + start_token) * d
+            sign_starts = ((bh_ids * sk) + start_token) * self.qjl_dim
+
+            idx_block = jax.vmap(
+                lambda start: unpack_low_bit_values_block(
+                    packed_indices,
+                    self.mse_bits,
+                    start,
+                    k_tile * d,
+                )
+            )(idx_starts)
+            idx_tile = idx_block.reshape((b, h, k_tile, d))
+
+            sign_block = jax.vmap(
+                lambda start: unpack_sign_bits_block(
+                    packed_signs,
+                    start,
+                    k_tile * self.qjl_dim,
+                )
+            )(sign_starts)
+            sign_tile = sign_block.reshape((b, h, k_tile, self.qjl_dim))
+
+            vec_tile = jax.lax.dynamic_slice(vec_norms_bh, (0, start_token), (bh, k_tile)).reshape((b, h, k_tile))
+            norm_tile = jax.lax.dynamic_slice(residual_norm_bh, (0, start_token), (bh, k_tile)).reshape((b, h, k_tile))
+
+            def q_body_fn(j: int, carry_q: jnp.ndarray) -> jnp.ndarray:
+                q_start = j * q_tile
+                q_rot_tile = jax.lax.dynamic_slice(q_rot, (0, 0, q_start, 0), (b, h, q_tile, d))
+                q_proj_tile = jax.lax.dynamic_slice(q_projected, (0, 0, q_start, 0), (b, h, q_tile, self.qjl_dim))
+
+                if self.score_backend == "pallas" and self._pallas_available:
+                    term1 = fused_term1_pallas(q_rot_tile, idx_tile, self.centroids, vec_tile)
+                else:
+                    term1 = fused_term1_xla(q_rot_tile, idx_tile, self.centroids, vec_tile)
+
+                qjl_ip = jnp.matmul(q_proj_tile, jnp.swapaxes(sign_tile.astype(jnp.float32), -2, -1))
+                term2 = correction_scale * qjl_ip * norm_tile[..., None, :]
+                tile_scores = term1 + term2
+                return jax.lax.dynamic_update_slice(carry_q, tile_scores, (0, 0, q_start, start_token))
+
+            return jax.lax.fori_loop(0, n_q_tiles, q_body_fn, carry_k)
+
+        full_scores = jax.lax.fori_loop(0, n_k_tiles, k_body_fn, out_scores)
+        return full_scores[:, :, :sq, :]
 
     def asymmetric_attention_scores_prepared(self, queries: jnp.ndarray, prepared: dict[str, Any]) -> jnp.ndarray:
         full_scores = self._score_core_tiled(
@@ -177,8 +292,19 @@ class TurboQuantCompressorV2JAX:
         return full_scores[..., : prepared["valid_sk"]]
 
     def asymmetric_attention_scores(self, queries: jnp.ndarray, compressed: dict[str, Any]) -> jnp.ndarray:
-        prepared = self.prepare_for_scoring(compressed)
-        return self.asymmetric_attention_scores_prepared(queries, prepared)
+        b, h, sk, d = compressed["shape"]
+        if sk % self.tile_size != 0:
+            prepared = self.prepare_for_scoring(compressed)
+            return self.asymmetric_attention_scores_prepared(queries, prepared)
+
+        return self._score_core_packed_tiled(
+            queries.astype(jnp.float32),
+            compressed["indices"],
+            compressed["qjl_signs"],
+            compressed["vec_norms"],
+            compressed["residual_norm"],
+            (b, h, sk, d),
+        )
 
 
 @dataclass
@@ -237,6 +363,7 @@ class JAXTurboQuantKVCache:
     score_cache_policy: Literal["prepared", "packed", "adaptive"] = "prepared"
     score_backend: Literal["xla", "pallas"] = "xla"
     tile_size: int = 256
+    query_tile_size: int = 128
     adaptive_promote_after: int = 2
     adaptive_hit_rate_threshold: float = 0.35
     adaptive_memory_budget_mb: float | None = None
@@ -249,6 +376,7 @@ class JAXTurboQuantKVCache:
             self.bits,
             self.seed,
             tile_size=self.tile_size,
+            query_tile_size=self.query_tile_size,
             score_backend=self.score_backend,
         )
         self.value_compressor = TurboQuantCompressorMSEJAX(self.d_value, self.bits, self.seed + 100)

@@ -47,8 +47,17 @@ def fused_term1_xla(
     vec_tile: jnp.ndarray,
 ) -> jnp.ndarray:
     rotated_tile = centroids[idx_tile.astype(jnp.int32)]
-    logits = jnp.matmul(queries_rot.astype(jnp.float32), jnp.swapaxes(rotated_tile, -2, -1))
-    return logits * vec_tile[..., None, :]
+
+    b, h, sq, d = queries_rot.shape
+    tile = rotated_tile.shape[2]
+
+    q_bh = queries_rot.astype(jnp.float32).reshape((b * h, sq, d))
+    k_bh = rotated_tile.astype(jnp.float32).reshape((b * h, tile, d))
+    v_bh = vec_tile.astype(jnp.float32).reshape((b * h, tile))
+
+    logits = jnp.einsum("bqd,bkd->bqk", q_bh, k_bh)
+    scaled = logits * v_bh[:, None, :]
+    return scaled.reshape((b, h, sq, tile))
 
 
 def _pallas_matmul_2d(q: jnp.ndarray, k: jnp.ndarray) -> jnp.ndarray:

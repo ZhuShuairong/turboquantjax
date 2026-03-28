@@ -84,6 +84,43 @@ def unpack_low_bit_values(packed: jnp.ndarray, bits: int, original_shape: Sequen
     return vals.reshape(tuple(original_shape))
 
 
+def unpack_low_bit_values_block(
+    packed: jnp.ndarray,
+    bits: int,
+    start_value: jnp.ndarray,
+    num_values: int,
+) -> jnp.ndarray:
+    """Decode a contiguous value block from a packed low-bit stream.
+
+    The block starts at flattened value index ``start_value`` and decodes
+    exactly ``num_values`` elements. This avoids unpacking the entire tensor
+    when only one tile is needed.
+    """
+    if bits < 1 or bits > 8:
+        raise ValueError(f"bits must be in [1, 8], got {bits}")
+    if num_values < 0:
+        raise ValueError(f"num_values must be non-negative, got {num_values}")
+    if num_values == 0:
+        return jnp.zeros((0,), dtype=jnp.uint8)
+
+    packed_u8 = jnp.asarray(packed, dtype=jnp.uint8).reshape(-1)
+    start = jnp.asarray(start_value, dtype=jnp.int32)
+
+    value_offsets = jnp.arange(num_values, dtype=jnp.int32)
+    value_indices = start + value_offsets
+
+    bit_offsets = jnp.arange(bits, dtype=jnp.int32)
+    bit_positions = value_indices[:, None] * bits + bit_offsets[None, :]
+
+    byte_indices = bit_positions >> 3
+    bit_shifts = bit_positions & 7
+
+    gathered = packed_u8[byte_indices]
+    bits_matrix = ((gathered >> bit_shifts.astype(jnp.uint8)) & 1).astype(jnp.uint16)
+    vals = jnp.sum(bits_matrix << bit_offsets[None, :].astype(jnp.uint16), axis=1)
+    return vals.astype(jnp.uint8)
+
+
 def pack_sign_bits(signs: jnp.ndarray) -> Tuple[jnp.ndarray, Tuple[int, ...]]:
     binary = (jnp.asarray(signs) >= 0).astype(jnp.uint8)
     return pack_low_bit_values(binary, 1)
@@ -91,4 +128,14 @@ def pack_sign_bits(signs: jnp.ndarray) -> Tuple[jnp.ndarray, Tuple[int, ...]]:
 
 def unpack_sign_bits(packed: jnp.ndarray, original_shape: Sequence[int]) -> jnp.ndarray:
     bits = unpack_low_bit_values(packed, 1, original_shape)
+    return bits.astype(jnp.int8) * 2 - 1
+
+
+def unpack_sign_bits_block(
+    packed: jnp.ndarray,
+    start_value: jnp.ndarray,
+    num_values: int,
+) -> jnp.ndarray:
+    """Decode a contiguous block of packed sign bits and map to {-1, +1}."""
+    bits = unpack_low_bit_values_block(packed, 1, start_value, num_values)
     return bits.astype(jnp.int8) * 2 - 1

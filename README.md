@@ -86,8 +86,8 @@ Expected output includes a CUDA device.
 
 ```bash
 python benchmark_jax.py --device gpu --bits 3 --dim 128 --num-vectors 4096
-python benchmark_jax_qwen35.py --device gpu --bits 2 3 4 --seq-len 2048 --score-cache-policy prepared --score-backend xla --tile-size 256
-python benchmark_adaptive_policy.py --device gpu --score-backend xla --tile-size 128 --seq-len 512 --reuse-queries 8
+python benchmark_jax_qwen35.py --device gpu --bits 2 3 4 --seq-len 2048 --score-cache-policy prepared --score-backend xla --tile-size 256 --query-tile-size 128
+python benchmark_adaptive_policy.py --device gpu --score-backend xla --tile-size 128 --query-tile-size 128 --seq-len 512 --reuse-queries 8
 ```
 
 ## Next Pass Optimizations
@@ -103,6 +103,8 @@ This repository now includes the next optimization pass for the remaining bottle
 
 - The tiled scoring path rotates queries once (`q @ Pi^T`) and computes term1 directly from codebook indices.
 - This avoids reconstructing full dequantized key tensors before matmul.
+- Packed scoring now decodes only the active key tile from packed bitstreams, instead of unpacking the entire sequence on each score call.
+- Scoring uses two-dimensional tiling (key tiles and query tiles) to reduce temporary tensor size and improve batching behavior.
 - Backend selection:
 	- `xla` (default, stable)
 	- `pallas` (optional, automatically falls back to `xla` if unsupported in the current JAX runtime)
@@ -148,27 +150,37 @@ This script copies files into `~/TQ-Experimentation/turboquant-jax` in WSL, acti
 ## Findings (Markdown)
 
 Benchmarks were run on Qwen3.5 base model configs with GPU-enabled JAX in WSL.
+Latest full rerun: 2026-03-28.
 
 ### Method Summary
 
 | Method | Avg baseline score (ms) | Avg compressed score (ms) | Avg compression |
 | --- | ---: | ---: | ---: |
-| baseline-fp16 | 1.08 | 1.08 | 1.00x |
-| mse-only-jax-packed-2bit | 1.08 | 1425.50 | 7.53x |
-| mse-only-jax-packed-3bit | 1.08 | 1986.89 | 5.12x |
-| mse-only-jax-packed-4bit | 1.08 | 2396.56 | 3.88x |
-| turboquant-jax-packed-2bit | 1.08 | 1736.14 | 7.31x |
-| turboquant-jax-packed-3bit | 1.08 | 2202.37 | 5.02x |
-| turboquant-jax-packed-4bit | 1.08 | 2724.39 | 3.82x |
+| baseline-fp16 | 1.25 | 1.25 | 1.00x |
+| mse-only-jax-packed-2bit | 1.25 | 3.01 | 7.53x |
+| mse-only-jax-packed-3bit | 1.25 | 2.11 | 5.12x |
+| mse-only-jax-packed-4bit | 1.25 | 2.06 | 3.88x |
+| turboquant-jax-packed-2bit | 1.25 | 1.33 | 7.31x |
+| turboquant-jax-packed-3bit | 1.25 | 1.38 | 5.02x |
+| turboquant-jax-packed-4bit | 1.25 | 1.40 | 3.82x |
+
+### Adaptive Policy Summary
+
+| Policy | Score (ms) | Stored compression | Runtime compression |
+| --- | ---: | ---: | ---: |
+| packed | 1.26 | 5.02x | 5.02x |
+| adaptive | 126.86 | 5.02x | 1.41x |
+| prepared | 1.18 | 5.02x | 1.41x |
 
 ### Observations
 
-- Packed JAX methods provide strong KV storage reduction.
-- 2-bit packing shows the best compression ratio.
-- Baseline fp16 scoring remains much faster in this version.
-- Compression and compressed scoring are dominated by packing and unpacking overhead in Python level logic.
+- TurboQuant JAX remains much closer to baseline score latency than MSE-only at the same bit-width.
+- 2-bit settings provide the highest stored compression, with expected quality and runtime tradeoffs.
+- Packed policy maximizes runtime memory compression; prepared policy minimizes repeated-query latency.
+- Adaptive policy can incur transition overhead under short, bursty reuse patterns.
 
 ## Notes
 
 - This project currently focuses on quantization primitives and benchmark workflows.
-- It does not yet patch compressed KV cache directly into full end to end generation loops.
+- It does not yet patch compressed KV cache directly into full end-to-end generation loops.
+- In-repo benchmark snapshot is available in `BENCHMARK_RESULTS.md`.
