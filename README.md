@@ -149,93 +149,50 @@ This script copies files into `~/TQ-Experimentation/turboquant-jax` in WSL, acti
 
 ## Findings (Markdown)
 
-Benchmarks were run on Qwen3.5 base model configs with GPU-enabled JAX in WSL.
-Latest full rerun: 2026-03-28.
+Benchmarks were run in WSL with GPU-enabled JAX and llama.cpp.
 Latest all-model safe rerun: 2026-03-28.
 
-### All-Model KV Cache Comparison (Safe Mode)
+### Important Comparison Tables
 
-To avoid desktop/display instability on 8 GB VRAM GPUs, use the safe-mode profile:
+These tables focus only on the key research question: default llama.cpp KV versus TurboQuant KV for context capacity.
 
-```bash
-python benchmark_turboquant_vs_llamacpp_kv.py \
-	--all-models \
-	--gguf-root /mnt/c/models/gguf \
-	--model-include qwen \
-	--model-exclude mmproj \
-	--contexts 2048 4096 8192 \
-	--decode-tokens 6 \
-	--llama-cache-types f16 q8_0 q4_0 \
-	--llama-n-gpu-layers -1 \
-	--llama-threads 6 \
-	--llama-threads-batch 6 \
-	--llama-n-batch 256 \
-	--turboquant-bits 2 3 4 \
-	--turboquant-policies packed prepared \
-	--device gpu \
-	--score-backend xla \
-	--tile-size 256 \
-	--query-tile-size 128 \
-	--vram-budget-mb 8192 \
-	--cooldown-s 2.0 \
-	--safe-mode \
-	--safe-max-context 8192 \
-	--safe-decode-tokens 4 \
-	--safe-llama-n-gpu-layers 16 \
-	--safe-llama-threads 4 \
-	--safe-llama-threads-batch 4 \
-	--safe-llama-n-batch 128 \
-	--safe-turboquant-bits 2 3 \
-	--safe-turboquant-policies packed \
-	--report-path /mnt/c/Users/zshua/Downloads/TQ-Experimentation/benchmark_qwen35_turboquant_rotorquant.md \
-	--json-output /mnt/c/Users/zshua/Downloads/TQ-Experimentation/kv_compare_all_models_safe.json
-```
+#### Matched Context (8192 tokens)
 
-Safe-mode run profile used in the latest all-model benchmark:
+| Model | llama.cpp default KV (MB) | TurboQuant KV (MB) | KV reduction | Projected max context @ 8GB (llama.cpp) | Projected max context @ 8GB (TurboQuant) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen3.5-4B-IQ4_XS | 1024.0 | 134.0 | 7.64x | 65536 | 500812 |
+| Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M | 1024.0 | 134.0 | 7.64x | 65536 | 500812 |
+| Qwen3.5-9B-IQ4_XS | 1024.0 | 134.0 | 7.64x | 65536 | 500812 |
 
-- Models benchmarked: `Qwen3.5-4B-IQ4_XS`, `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M`, `Qwen3.5-9B-IQ4_XS`
-- Context sweep: `2048, 4096, 8192`
-- Decode tokens: `4`
-- llama.cpp offload cap: `n_gpu_layers=16`
-- TurboQuant matrix in safe mode: packed policies with `2/3-bit`
+#### Context Scaling Example (Qwen3.5-4B-IQ4_XS)
 
-Observed outcome at matched context (8192 tokens):
+| Context tokens | llama.cpp default KV (MB) | TurboQuant KV (MB) | KV reduction |
+| ---: | ---: | ---: | ---: |
+| 2048 | 256.0 | 33.5 | 7.64x |
+| 4096 | 512.0 | 67.0 | 7.64x |
+| 8192 | 1024.0 | 134.0 | 7.64x |
 
-- llama.cpp f16 KV estimate: `1024 MB`
-- TurboQuant packed 2-bit runtime KV: `134 MB`
-- KV memory improvement: `7.64x`
+#### Throughput Snapshot at 8192 tokens
 
-Note on current llama.cpp runtime:
-
-- `q8_0` and `q4_0` KV cache modes failed with `Failed to create llama_context` in this environment.
-- f16 KV mode completed successfully and is the baseline used in the matched-context comparison.
-
-### Method Summary
-
-| Method | Avg baseline score (ms) | Avg compressed score (ms) | Avg compression |
+| Model | llama.cpp prefill (tok/s) | llama.cpp decode (tok/s) | TurboQuant score kernel (tok/s) |
 | --- | ---: | ---: | ---: |
-| baseline-fp16 | 1.25 | 1.25 | 1.00x |
-| mse-only-jax-packed-2bit | 1.25 | 3.01 | 7.53x |
-| mse-only-jax-packed-3bit | 1.25 | 2.11 | 5.12x |
-| mse-only-jax-packed-4bit | 1.25 | 2.06 | 3.88x |
-| turboquant-jax-packed-2bit | 1.25 | 1.33 | 7.31x |
-| turboquant-jax-packed-3bit | 1.25 | 1.38 | 5.02x |
-| turboquant-jax-packed-4bit | 1.25 | 1.40 | 3.82x |
+| Qwen3.5-4B-IQ4_XS | 730.9 | 18.8 | 11.3 |
+| Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M | 630.2 | 14.4 | 12.0 |
+| Qwen3.5-9B-IQ4_XS | 400.4 | 10.3 | 10.6 |
 
-### Adaptive Policy Summary
+#### llama.cpp KV Type Support in This Runtime
 
-| Policy | Score (ms) | Stored compression | Runtime compression |
-| --- | ---: | ---: | ---: |
-| packed | 1.26 | 5.02x | 5.02x |
-| adaptive | 126.86 | 5.02x | 1.41x |
-| prepared | 1.18 | 5.02x | 1.41x |
+| Model | q8_0 KV mode | q4_0 KV mode |
+| --- | --- | --- |
+| Qwen3.5-4B-IQ4_XS | load-failed (`Failed to create llama_context`) | load-failed (`Failed to create llama_context`) |
+| Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M | load-failed (`Failed to create llama_context`) | load-failed (`Failed to create llama_context`) |
+| Qwen3.5-9B-IQ4_XS | load-failed (`Failed to create llama_context`) | load-failed (`Failed to create llama_context`) |
 
-### Observations
+### Bottom Line
 
-- TurboQuant JAX remains much closer to baseline score latency than MSE-only at the same bit-width.
-- 2-bit settings provide the highest stored compression, with expected quality and runtime tradeoffs.
-- Packed policy maximizes runtime memory compression; prepared policy minimizes repeated-query latency.
-- Adaptive policy can incur transition overhead under short, bursty reuse patterns.
+- In this setup, TurboQuant packed 2-bit KV reduced runtime KV memory by 7.64x versus default llama.cpp f16 KV at matched context.
+- That reduction translates to higher projected context capacity under the same 8GB KV budget.
+- Full concise benchmark report is in `benchmark_qwen35_turboquant_rotorquant.md`.
 
 ## Notes
 
