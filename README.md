@@ -151,6 +151,64 @@ This script copies files into `~/TQ-Experimentation/turboquant-jax` in WSL, acti
 
 Benchmarks were run on Qwen3.5 base model configs with GPU-enabled JAX in WSL.
 Latest full rerun: 2026-03-28.
+Latest all-model safe rerun: 2026-03-28.
+
+### All-Model KV Cache Comparison (Safe Mode)
+
+To avoid desktop/display instability on 8 GB VRAM GPUs, use the safe-mode profile:
+
+```bash
+python benchmark_turboquant_vs_llamacpp_kv.py \
+	--all-models \
+	--gguf-root /mnt/c/models/gguf \
+	--model-include qwen \
+	--model-exclude mmproj \
+	--contexts 2048 4096 8192 \
+	--decode-tokens 6 \
+	--llama-cache-types f16 q8_0 q4_0 \
+	--llama-n-gpu-layers -1 \
+	--llama-threads 6 \
+	--llama-threads-batch 6 \
+	--llama-n-batch 256 \
+	--turboquant-bits 2 3 4 \
+	--turboquant-policies packed prepared \
+	--device gpu \
+	--score-backend xla \
+	--tile-size 256 \
+	--query-tile-size 128 \
+	--vram-budget-mb 8192 \
+	--cooldown-s 2.0 \
+	--safe-mode \
+	--safe-max-context 8192 \
+	--safe-decode-tokens 4 \
+	--safe-llama-n-gpu-layers 16 \
+	--safe-llama-threads 4 \
+	--safe-llama-threads-batch 4 \
+	--safe-llama-n-batch 128 \
+	--safe-turboquant-bits 2 3 \
+	--safe-turboquant-policies packed \
+	--report-path /mnt/c/Users/zshua/Downloads/TQ-Experimentation/benchmark_qwen35_turboquant_rotorquant.md \
+	--json-output /mnt/c/Users/zshua/Downloads/TQ-Experimentation/kv_compare_all_models_safe.json
+```
+
+Safe-mode run profile used in the latest all-model benchmark:
+
+- Models benchmarked: `Qwen3.5-4B-IQ4_XS`, `Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M`, `Qwen3.5-9B-IQ4_XS`
+- Context sweep: `2048, 4096, 8192`
+- Decode tokens: `4`
+- llama.cpp offload cap: `n_gpu_layers=16`
+- TurboQuant matrix in safe mode: packed policies with `2/3-bit`
+
+Observed outcome at matched context (8192 tokens):
+
+- llama.cpp f16 KV estimate: `1024 MB`
+- TurboQuant packed 2-bit runtime KV: `134 MB`
+- KV memory improvement: `7.64x`
+
+Note on current llama.cpp runtime:
+
+- `q8_0` and `q4_0` KV cache modes failed with `Failed to create llama_context` in this environment.
+- f16 KV mode completed successfully and is the baseline used in the matched-context comparison.
 
 ### Method Summary
 
