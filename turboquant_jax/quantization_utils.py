@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import math
 from typing import Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from .lloyd_max import LloydMaxCodebook, get_lloyd_max_codebook as _get_codebook
 
@@ -39,54 +39,54 @@ def pack_low_bit_values(values: jnp.ndarray, bits: int) -> Tuple[jnp.ndarray, Tu
     if bits < 1 or bits > 8:
         raise ValueError(f"bits must be in [1, 8], got {bits}")
 
-    values_np = np.asarray(values, dtype=np.uint8)
-    original_shape = tuple(values_np.shape)
-    flat = values_np.reshape(-1).astype(np.uint64)
+    values_u8 = jnp.asarray(values, dtype=jnp.uint8)
+    original_shape = tuple(values_u8.shape)
+    flat = values_u8.reshape(-1).astype(jnp.uint16)
     if flat.size == 0:
-        return jnp.asarray(np.empty((0,), dtype=np.uint8)), original_shape
+        return jnp.zeros((0,), dtype=jnp.uint8), original_shape
 
-    max_value = (1 << bits) - 1
-    if flat.min() < 0 or flat.max() > max_value:
-        raise ValueError(f"values must fit in {bits} bits")
+    # Values are expected to come from quantization indices already bounded by bit-width.
 
-    total_bits = flat.size * bits
-    out = np.zeros((total_bits + 7) // 8, dtype=np.uint8)
+    # Little-endian bit layout: per value we emit bit0, bit1, ... bit(bits-1).
+    bit_offsets = jnp.arange(bits, dtype=jnp.uint16)
+    bit_matrix = ((flat[:, None] >> bit_offsets[None, :]) & 1).astype(jnp.uint8)
+    bits_flat = bit_matrix.reshape(-1)
 
-    bit_index = 0
-    for val in flat:
-        for offset in range(bits):
-            out[bit_index >> 3] |= ((int(val) >> offset) & 1) << (bit_index & 7)
-            bit_index += 1
+    pad_bits = (-bits_flat.shape[0]) % 8
+    bits_padded = jnp.pad(bits_flat, (0, pad_bits), mode="constant", constant_values=0)
+    bytes_matrix = bits_padded.reshape(-1, 8).astype(jnp.uint16)
 
-    return jnp.asarray(out), original_shape
+    byte_offsets = jnp.arange(8, dtype=jnp.uint16)
+    packed = jnp.sum(bytes_matrix << byte_offsets[None, :], axis=1).astype(jnp.uint8)
+
+    return packed, original_shape
 
 
 def unpack_low_bit_values(packed: jnp.ndarray, bits: int, original_shape: Sequence[int]) -> jnp.ndarray:
     if bits < 1 or bits > 8:
         raise ValueError(f"bits must be in [1, 8], got {bits}")
 
-    packed_np = np.asarray(packed, dtype=np.uint8)
-    total = int(np.prod(tuple(original_shape)))
+    packed_u8 = jnp.asarray(packed, dtype=jnp.uint8).reshape(-1)
+    total = math.prod(tuple(original_shape))
     if total == 0:
-        return jnp.asarray(np.empty(tuple(original_shape), dtype=np.uint8))
+        return jnp.zeros(tuple(original_shape), dtype=jnp.uint8)
 
-    vals = np.zeros(total, dtype=np.uint8)
-    bit_index = 0
-    for i in range(total):
-        value = 0
-        for offset in range(bits):
-            byte = packed_np[bit_index >> 3]
-            bit = (byte >> (bit_index & 7)) & 1
-            value |= bit << offset
-            bit_index += 1
-        vals[i] = value
+    nbits = total * bits
 
-    return jnp.asarray(vals.reshape(tuple(original_shape)))
+    bit_offsets8 = jnp.arange(8, dtype=jnp.uint8)
+    bit_matrix8 = ((packed_u8[:, None] >> bit_offsets8[None, :]) & 1).astype(jnp.uint8)
+    bits_flat = bit_matrix8.reshape(-1)[:nbits]
+    bit_matrix = bits_flat.reshape(total, bits).astype(jnp.uint16)
+
+    bit_offsets = jnp.arange(bits, dtype=jnp.uint16)
+    vals = jnp.sum(bit_matrix << bit_offsets[None, :], axis=1).astype(jnp.uint8)
+
+    return vals.reshape(tuple(original_shape))
 
 
 def pack_sign_bits(signs: jnp.ndarray) -> Tuple[jnp.ndarray, Tuple[int, ...]]:
-    binary = (np.asarray(signs) >= 0).astype(np.uint8)
-    return pack_low_bit_values(jnp.asarray(binary), 1)
+    binary = (jnp.asarray(signs) >= 0).astype(jnp.uint8)
+    return pack_low_bit_values(binary, 1)
 
 
 def unpack_sign_bits(packed: jnp.ndarray, original_shape: Sequence[int]) -> jnp.ndarray:

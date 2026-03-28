@@ -11,9 +11,11 @@ JAX implementation of TurboQuant core math with:
 - `turboquant_jax/lloyd_max.py`: Lloyd-Max scalar codebook solver with cache
 - `turboquant_jax/quantization_utils.py`: Rotation, QJL matrix generation, and bit packing helpers
 - `turboquant_jax/turboquant.py`: TurboQuant MSE and Prod core math
-- `turboquant_jax/compressors.py`: Packed key and value compressors plus `JAXTurboQuantKVCache`
+- `turboquant_jax/fused_kernels.py`: Fused dequantization plus attention term1 kernels (XLA and optional Pallas)
+- `turboquant_jax/compressors.py`: Packed key and value compressors plus `JAXTurboQuantKVCache` with adaptive policy
 - `benchmark_jax.py`: Microbenchmark for JIT, VMAP, and AutoDiff paths
 - `benchmark_jax_qwen35.py`: GPU benchmark across local Qwen3.5 base configs with markdown report generation
+- `benchmark_adaptive_policy.py`: Packed versus adaptive versus prepared policy benchmark with reuse statistics
 - `scripts/run_wsl_benchmark.ps1`: PowerShell helper that syncs project into WSL and runs benchmarks in conda
 
 ## WSL Setup (Recommended)
@@ -84,8 +86,54 @@ Expected output includes a CUDA device.
 
 ```bash
 python benchmark_jax.py --device gpu --bits 3 --dim 128 --num-vectors 4096
-python benchmark_jax_qwen35.py --device gpu --bits 2 3 4 --seq-len 2048
+python benchmark_jax_qwen35.py --device gpu --bits 2 3 4 --seq-len 2048 --score-cache-policy prepared --score-backend xla --tile-size 256
+python benchmark_adaptive_policy.py --device gpu --score-backend xla --tile-size 128 --seq-len 512 --reuse-queries 8
 ```
+
+## Next Pass Optimizations
+
+This repository now includes the next optimization pass for the remaining bottlenecks.
+
+### 1. Device-side packing and unpacking
+
+- Bit packing and unpacking are now fully implemented with JAX arrays.
+- The previous NumPy host loop path has been removed from the hot path.
+
+### 2. Fused dequantization plus attention matmul path
+
+- The tiled scoring path rotates queries once (`q @ Pi^T`) and computes term1 directly from codebook indices.
+- This avoids reconstructing full dequantized key tensors before matmul.
+- Backend selection:
+	- `xla` (default, stable)
+	- `pallas` (optional, automatically falls back to `xla` if unsupported in the current JAX runtime)
+
+### 3. Adaptive runtime policy switch
+
+`JAXTurboQuantKVCache` supports three score cache policies:
+
+- `packed`: minimum runtime memory, higher repeated-query latency
+- `prepared`: lower repeated-query latency, higher runtime memory due to prepared tensors
+- `adaptive`: promotes prefixes from packed to prepared using hit-rate and reuse statistics
+
+Adaptive policy controls:
+
+- `adaptive_promote_after`: minimum reuse count before promotion
+- `adaptive_hit_rate_threshold`: required cache-hit rate before promotion is allowed
+- `adaptive_memory_budget_mb`: optional cap on prepared-cache memory
+
+Runtime statistics are exposed by `policy_stats()` and include:
+
+- cache hit rate
+- prepared versus packed score calls
+- promotion events
+- average reuse per cached segment
+
+## Production Guidance
+
+- Choose `packed` for memory-constrained, low-reuse traffic.
+- Choose `prepared` for high-reuse prefixes where latency is critical.
+- Choose `adaptive` for mixed traffic where reuse varies over time.
+- Tune `tile_size` by device and model shape, typically 128 or 256 as starting points.
 
 ## Optional Windows Helper Script
 
