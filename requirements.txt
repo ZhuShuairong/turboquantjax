@@ -1,0 +1,16 @@
+# Core JAX TurboQuant dependencies
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Install CUDA-enabled JAX in WSL/Linux with:
+#   pip install -U "jax[cuda12]"
+# For CPU-only fallback:
+#   pip install -U "jax[cpu]"
+jax>=0.4.33
+jaxlib>=0.4.33
+
+# Research / validation stack (validate.py)
+transformers>=4.40.0
+accelerate>=0.25.0
+torch>=2.2.0
+bitsandbytes>=0.43.0; platform_system == "Linux"

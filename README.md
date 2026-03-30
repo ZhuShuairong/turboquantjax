@@ -16,6 +16,7 @@ JAX implementation of TurboQuant core math with:
 - `benchmark_jax.py`: Microbenchmark for JIT, VMAP, and AutoDiff paths
 - `benchmark_jax_qwen35.py`: GPU benchmark across local Qwen3.5 base configs with markdown report generation
 - `benchmark_adaptive_policy.py`: Packed versus adaptive versus prepared policy benchmark with reuse statistics
+- `TURBOQUANT_APPLY_PLAYBOOK.md`: AI-oriented implementation playbook for applying TurboQuant KV compression to GGUF and base-model runtimes
 - `scripts/run_wsl_benchmark.ps1`: PowerShell helper that syncs project into WSL and runs benchmarks in conda
 
 ## WSL Setup (Recommended)
@@ -136,6 +137,56 @@ Runtime statistics are exposed by `policy_stats()` and include:
 - Choose `prepared` for high-reuse prefixes where latency is critical.
 - Choose `adaptive` for mixed traffic where reuse varies over time.
 - Tune `tile_size` by device and model shape, typically 128 or 256 as starting points.
+
+## Scripts
+
+### test_turboquant.py - Synthetic Validation
+
+Validates the core algorithm without requiring a model download.
+
+What it checks:
+- Lloyd-Max codebook symmetry and ranges across dimensions and bit-widths
+- MSE distortion against theoretical bounds
+- Inner-product bias and correlation under QJL correction
+- MSE-only bias (motivation for QJL)
+- KV cache compression ratio and attention score path
+- Needle-in-haystack retrieval behavior
+- Optional GPU speed benchmark
+
+Run in WSL directly:
+
+```bash
+python3 test_turboquant.py
+```
+
+Run from Windows PowerShell via helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run_tests_wsl.ps1
+```
+
+### validate.py - Real Model Validation
+
+Runs real-model KV cache validation on Qwen2.5-3B-Instruct and compares
+TurboQuant compressed attention scores with full-precision scores.
+
+What it reports:
+- Compression ratio per bit-width
+- Attention score cosine similarity
+- Top-1 and Top-5 match rates
+- Needle token rank behavior
+
+Run in WSL directly:
+
+```bash
+XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 python3 validate.py
+```
+
+Run from Windows PowerShell via helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run_validate_wsl.ps1
+```
 
 ## Optional Windows Helper Script
 
