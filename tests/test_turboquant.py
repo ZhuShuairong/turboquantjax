@@ -13,7 +13,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from turboquant_jax import TurboQuantCompressorV2, TurboQuantKVCache, TurboQuantMSE, TurboQuantProd
 from turboquant_jax.compressors import JAXTurboQuantKVCache, TurboQuantCompressorV2JAX

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
+import sys
 from typing import Any
 
 import jax
 import jax.numpy as jnp
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from turboquant_jax import (
     calibrate_qjl_scale_step,

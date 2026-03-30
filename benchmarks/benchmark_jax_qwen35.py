@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import math
 import time
+import sys
 from pathlib import Path
 from typing import Any
 
 import jax
 import jax.numpy as jnp
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from turboquant_jax import TurboQuantCompressorMSEJAX, TurboQuantCompressorV2JAX
 

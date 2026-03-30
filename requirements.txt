@@ -9,7 +9,7 @@ scipy>=1.10.0
 jax>=0.4.33
 jaxlib>=0.4.33
 
-# Research / validation stack (validate.py)
+# Research / validation stack (tests/validate.py)
 transformers>=4.40.0
 accelerate>=0.25.0
 torch>=2.2.0

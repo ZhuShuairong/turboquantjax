@@ -65,6 +65,6 @@ Settings:
 
 Run these in WSL from the turboquant-jax folder:
 
-- python benchmark_jax_qwen35.py --device gpu --bits 2 3 4 --seq-len 2048 --score-cache-policy prepared --score-backend xla --tile-size 256 --query-tile-size 128
-- python benchmark_adaptive_policy.py --device gpu --score-backend xla --tile-size 128 --query-tile-size 128 --seq-len 512 --reuse-queries 8
+- python benchmarks/benchmark_jax_qwen35.py --device gpu --bits 2 3 4 --seq-len 2048 --score-cache-policy prepared --score-backend xla --tile-size 256 --query-tile-size 128
+- python benchmarks/benchmark_adaptive_policy.py --device gpu --score-backend xla --tile-size 128 --query-tile-size 128 --seq-len 512 --reuse-queries 8
 - python /mnt/c/Users/zshua/Downloads/TQ-Experimentation/turboquant-pytorch/benchmark_wsl_base_vs_gguf.py --contexts 256 512 1024 --decode-tokens 24

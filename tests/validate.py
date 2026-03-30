@@ -29,8 +29,8 @@ except ImportError:
     BitsAndBytesConfig = None
 HAS_BITSANDBYTES = importlib.util.find_spec("bitsandbytes") is not None
 
-# Allow running as `python validate.py` from within the package directory
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Allow running as `python tests/validate.py` from the repo root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from turboquant_jax.compressors import TurboQuantCompressorV2JAX, TurboQuantCompressorMSEJAX
 
