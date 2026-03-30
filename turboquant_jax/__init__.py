@@ -22,6 +22,17 @@ from .compat import (
     TurboQuantProd,
 )
 from .lloyd_max import LloydMaxCodebook, solve_lloyd_max
+from .runtime import (
+    BenchmarkConfig,
+    GenerateRequest,
+    GenerationMetrics,
+    GenerationResult,
+    GgufBackend,
+    HfBackend,
+    LlamaCppBridge,
+    TurboQuantCacheAnalyzer,
+    run_benchmark,
+)
 
 __all__ = [
     "CompressedProd",
@@ -47,4 +58,13 @@ __all__ = [
     "TurboQuantCompressorMSE",
     "LloydMaxCodebook",
     "solve_lloyd_max",
+    "BenchmarkConfig",
+    "GenerateRequest",
+    "GenerationMetrics",
+    "GenerationResult",
+    "GgufBackend",
+    "HfBackend",
+    "LlamaCppBridge",
+    "TurboQuantCacheAnalyzer",
+    "run_benchmark",
 ]

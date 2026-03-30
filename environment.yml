@@ -5,6 +5,11 @@ dependencies:
   - python=3.11
   - numpy
   - scipy
+  - psutil
   - pip
   - pip:
       - "jax[cpu]>=0.4.33"
+      - "transformers>=4.40.0"
+      - "accelerate>=0.25.0"
+      - "torch>=2.2.0"
+      - "sentencepiece>=0.1.99"

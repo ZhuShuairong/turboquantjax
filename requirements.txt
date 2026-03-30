@@ -8,9 +8,14 @@ scipy>=1.10.0
 #   pip install -U "jax[cpu]"
 jax>=0.4.33
 jaxlib>=0.4.33
+psutil>=5.9.0
 
 # Research / validation stack (tests/validate.py)
 transformers>=4.40.0
 accelerate>=0.25.0
 torch>=2.2.0
+sentencepiece>=0.1.99
 bitsandbytes>=0.43.0; platform_system == "Linux"
+
+# GGUF runtime path
+llama-cpp-python>=0.2.78; platform_system == "Linux"
