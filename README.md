@@ -6,6 +6,37 @@ JAX implementation of TurboQuant core math with:
 - AutoDiff for calibration of the QJL correction scale
 - Packed storage compressors and a KV cache wrapper API
 
+## Class-Style Compatibility Layer
+
+To ease migration from the PyTorch reference API, this repo now exports class-style wrappers with the same names:
+
+- `TurboQuantMSE`
+- `TurboQuantProd`
+- `TurboQuantKVCache`
+- `TurboQuantCompressorV2`
+- `TurboQuantCompressorMSE`
+
+Example:
+
+```python
+import jax.numpy as jnp
+from turboquant_jax import TurboQuantProd
+
+quantizer = TurboQuantProd(d=128, bits=3, seed=42)
+x = jnp.ones((1024, 128), dtype=jnp.float32)
+y = jnp.ones((1024, 128), dtype=jnp.float32)
+
+compressed = quantizer.quantize(x)
+ip = quantizer.inner_product(y, compressed)
+```
+
+Legacy-style imports are also supported via shim modules:
+
+```python
+from turboquant import TurboQuantMSE, TurboQuantProd, TurboQuantKVCache
+from compressors import TurboQuantCompressorV2, TurboQuantCompressorMSE
+```
+
 ## Project Layout
 
 - `turboquant_jax/lloyd_max.py`: Lloyd-Max scalar codebook solver with cache
@@ -16,7 +47,6 @@ JAX implementation of TurboQuant core math with:
 - `benchmark_jax.py`: Microbenchmark for JIT, VMAP, and AutoDiff paths
 - `benchmark_jax_qwen35.py`: GPU benchmark across local Qwen3.5 base configs with markdown report generation
 - `benchmark_adaptive_policy.py`: Packed versus adaptive versus prepared policy benchmark with reuse statistics
-- `TURBOQUANT_APPLY_PLAYBOOK.md`: AI-oriented implementation playbook for applying TurboQuant KV compression to GGUF and base-model runtimes
 - `scripts/run_wsl_benchmark.ps1`: PowerShell helper that syncs project into WSL and runs benchmarks in conda
 
 ## WSL Setup (Recommended)
@@ -165,6 +195,12 @@ Run from Windows PowerShell via helper:
 powershell -ExecutionPolicy Bypass -File run_tests_wsl.ps1
 ```
 
+If dependencies are already installed in WSL and you want a faster start, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run_tests_wsl.ps1 -SkipInstall
+```
+
 ### validate.py - Real Model Validation
 
 Runs real-model KV cache validation on Qwen2.5-3B-Instruct and compares
@@ -186,6 +222,12 @@ Run from Windows PowerShell via helper:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File run_validate_wsl.ps1
+```
+
+Fast path when dependencies are already present:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run_validate_wsl.ps1 -SkipInstall
 ```
 
 ## Optional Windows Helper Script
@@ -250,3 +292,46 @@ These tables focus only on the key research question: default llama.cpp KV versu
 - This project currently focuses on quantization primitives and benchmark workflows.
 - It does not yet patch compressed KV cache directly into full end-to-end generation loops.
 - In-repo benchmark snapshot is available in `BENCHMARK_RESULTS.md`.
+
+## TurboQuant Apply Playbook
+
+This section consolidates the standalone apply guide into the main README so there is one source of truth for deployment-oriented usage.
+
+### Goal
+
+Apply TurboQuant-style KV cache compression to reduce runtime KV memory while preserving acceptable quality and latency. The same guidance applies to GGUF/llama.cpp paths and base-model inference stacks such as Transformers or vLLM.
+
+### Integration Checklist
+
+1. Identify the runtime and model family.
+2. Extract model metadata: layer count, KV head count, head dimensions, and context limit.
+3. Estimate fp16 KV memory and project the savings from compressed KV.
+4. Start with bits=3 and packed policy; move to bits=2 only if memory pressure remains high.
+5. Verify attention score drift on sampled prompts and run a small sanity set before broader rollout.
+6. Benchmark across contexts such as 2k, 4k, and 8k tokens and record both memory and throughput.
+7. Choose packed, prepared, or adaptive based on the memory/latency tradeoff.
+
+### Runtime Contracts
+
+Any runtime integration should expose these operations:
+
+- append(keys, values): compress and store KV segments.
+- attention_scores(query): compute attention directly from compressed keys when possible.
+- gather_values(attn_weights): return weighted value output using compressed or reconstructed values.
+- memory_usage(): report stored bits, runtime bits, and compression ratios versus fp16.
+
+### Policy Guidance
+
+- packed: lowest runtime memory and best for strict VRAM limits.
+- prepared: higher runtime memory and lower repeated-query latency.
+- adaptive: promote hot prefixes from packed to prepared based on reuse and hit-rate thresholds.
+
+### Acceptance Criteria
+
+Define thresholds before rollout. A practical target is at least 4x KV reduction at the target context with no severe quality regression and no stability issues.
+
+### Stability Notes
+
+- Prefer staged context growth over immediate max-context loads.
+- Keep fallback paths enabled.
+- Reduce JAX preallocation on low-VRAM GPUs when running in WSL or Linux.

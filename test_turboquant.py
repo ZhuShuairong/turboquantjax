@@ -15,6 +15,7 @@ import jax.numpy as jnp
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from turboquant_jax import TurboQuantCompressorV2, TurboQuantKVCache, TurboQuantMSE, TurboQuantProd
 from turboquant_jax.compressors import JAXTurboQuantKVCache, TurboQuantCompressorV2JAX
 from turboquant_jax.lloyd_max import get_lloyd_max_codebook
 from turboquant_jax.turboquant import (
@@ -251,7 +252,7 @@ def test_needle_in_haystack():
 def test_gpu_if_available():
     """Run a quick benchmark on GPU if available."""
     print("=" * 60)
-    print("TEST 7: GPU Benchmark (if CUDA available)")
+    print("TEST 8: GPU Benchmark (if CUDA available)")
     print("=" * 60)
 
     try:
@@ -325,6 +326,52 @@ def test_gpu_if_available():
     print()
 
 
+def test_class_compatibility_layer():
+    """Smoke test for PyTorch-style class wrappers exposed by turboquant_jax."""
+    print("=" * 60)
+    print("TEST 7: Class-Style Compatibility Layer")
+    print("=" * 60)
+
+    d = 64
+    key = jax.random.PRNGKey(7)
+    key, sk1, sk2 = jax.random.split(key, 3)
+
+    x = jax.random.normal(sk1, (256, d), dtype=jnp.float32)
+    y = jax.random.normal(sk2, (256, d), dtype=jnp.float32)
+
+    mse = TurboQuantMSE(d, bits=3, seed=7)
+    x_hat, indices = mse(x)
+    _block_tree((x_hat, indices))
+    assert x_hat.shape == x.shape
+    assert indices.shape == x.shape
+
+    prod = TurboQuantProd(d, bits=3, seed=7)
+    compressed = prod.quantize(x)
+    ip = prod.inner_product(y, compressed)
+    _block_tree(ip)
+    assert ip.shape == (256,)
+
+    cache = TurboQuantKVCache(d_key=d, d_value=d, bits=3, seed=7)
+    cache.append(x, x)
+    scores = cache.attention_scores(y[:1])
+    values = cache.get_values()
+    _block_tree((scores, values))
+    assert scores.shape[-1] == 256
+    assert values.shape == (256, d)
+
+    key, sk3 = jax.random.split(key)
+    keys_4d = jax.random.normal(sk3, (1, 1, 128, d), dtype=jnp.float32)
+    queries_4d = keys_4d[:, :, :1, :]
+    comp = TurboQuantCompressorV2(head_dim=d, bits=3, seed=7)
+    packed = comp.compress(keys_4d)
+    attn = comp.asymmetric_attention_scores(queries_4d, packed, chunk_size=64)
+    _block_tree(attn)
+    assert attn.shape == (1, 1, 1, 128)
+
+    print("  Compatibility wrappers: PASSED")
+    print()
+
+
 if __name__ == "__main__":
     print()
     print("TurboQuant JAX Implementation Verification")
@@ -337,6 +384,7 @@ if __name__ == "__main__":
     test_mse_only_inner_product_bias()
     test_kv_cache()
     test_needle_in_haystack()
+    test_class_compatibility_layer()
     test_gpu_if_available()
 
     print("=" * 60)

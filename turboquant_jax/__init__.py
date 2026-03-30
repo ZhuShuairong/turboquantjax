@@ -14,6 +14,14 @@ from .turboquant import (
     prod_quantize,
 )
 from .compressors import JAXTurboQuantKVCache, TurboQuantCompressorMSEJAX, TurboQuantCompressorV2JAX
+from .compat import (
+    TurboQuantCompressorMSE,
+    TurboQuantCompressorV2,
+    TurboQuantKVCache,
+    TurboQuantMSE,
+    TurboQuantProd,
+)
+from .lloyd_max import LloydMaxCodebook, solve_lloyd_max
 
 __all__ = [
     "CompressedProd",
@@ -32,4 +40,11 @@ __all__ = [
     "JAXTurboQuantKVCache",
     "TurboQuantCompressorMSEJAX",
     "TurboQuantCompressorV2JAX",
+    "TurboQuantMSE",
+    "TurboQuantProd",
+    "TurboQuantKVCache",
+    "TurboQuantCompressorV2",
+    "TurboQuantCompressorMSE",
+    "LloydMaxCodebook",
+    "solve_lloyd_max",
 ]

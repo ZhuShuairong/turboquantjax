@@ -3,7 +3,8 @@
 param(
     [string]$Distro = "Ubuntu",
     [double]$JaxMemFraction = 0.5,
-    [string]$CondaEnv = "turboquant-jax"
+    [string]$CondaEnv = "turboquant-jax",
+    [switch]$SkipInstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,7 +39,8 @@ if ([string]::IsNullOrWhiteSpace($RepoPathWsl)) {
     exit 1
 }
 
-$bashCommand = "set -euo pipefail; cd '$RepoPathWsl'; if [ -f ~/miniconda3/etc/profile.d/conda.sh ]; then source ~/miniconda3/etc/profile.d/conda.sh; if conda env list | grep -E '^$CondaEnv[[:space:]]' >/dev/null; then conda activate $CondaEnv; else conda env create -f environment.yml; conda activate $CondaEnv; fi; fi; export XLA_PYTHON_CLIENT_PREALLOCATE=false; export XLA_PYTHON_CLIENT_MEM_FRACTION=$JaxMemFraction; if command -v python >/dev/null 2>&1; then python -m pip install -U pip >/dev/null; python -m pip install -U scipy 'jax[cuda12]' transformers accelerate torch bitsandbytes >/dev/null; python validate.py; else python3 -m pip install -U pip >/dev/null; python3 -m pip install -U scipy 'jax[cuda12]' transformers accelerate torch bitsandbytes >/dev/null; python3 validate.py; fi"
+$SkipInstallFlag = if ($SkipInstall) { "1" } else { "0" }
+$bashCommand = "set -euo pipefail; cd '$RepoPathWsl'; if [ -f ~/miniconda3/etc/profile.d/conda.sh ]; then source ~/miniconda3/etc/profile.d/conda.sh; if conda env list | grep -E '^$CondaEnv[[:space:]]' >/dev/null; then conda activate $CondaEnv; else conda env create -f environment.yml; conda activate $CondaEnv; fi; fi; export XLA_PYTHON_CLIENT_PREALLOCATE=false; export XLA_PYTHON_CLIENT_MEM_FRACTION=$JaxMemFraction; if [ '$SkipInstallFlag' != '1' ]; then if command -v python >/dev/null 2>&1; then if ! python -c 'import jax, scipy, transformers, accelerate, torch' >/dev/null 2>&1; then echo 'Installing missing validation dependencies...'; python -m pip install -U scipy 'jax[cuda12]' transformers accelerate torch bitsandbytes; fi; else if ! python3 -c 'import jax, scipy, transformers, accelerate, torch' >/dev/null 2>&1; then echo 'Installing missing validation dependencies...'; python3 -m pip install -U scipy 'jax[cuda12]' transformers accelerate torch bitsandbytes; fi; fi; fi; if command -v python >/dev/null 2>&1; then python validate.py; else python3 validate.py; fi"
 
 wsl.exe -d $Distro bash -lc $bashCommand
 
